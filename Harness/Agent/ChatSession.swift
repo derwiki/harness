@@ -18,7 +18,10 @@ final class ChatSession {
     }
     /// Called when `isRunning` changes. `SessionStore` uses it to track running conversations.
     @ObservationIgnored var onRunningChange: ((Bool) -> Void)?
-    private(set) var streamingText = ""
+    /// Everything received so far in the current request. Not observed: the UI shows `pacer.displayedText`.
+    @ObservationIgnored private(set) var streamingText = ""
+    /// Reveals `streamingText` at a steady rhythm, whole words at a time.
+    let pacer = StreamPacer()
     private(set) var streamingToolCalls: [ToolCallRecord] = []
     private(set) var runningToolCallIDs: Set<String> = []
     var errorMessage: String?
@@ -83,6 +86,7 @@ final class ChatSession {
                 try Task.checkCancellation()
                 streamingText = ""
                 streamingToolCalls = []
+                pacer.reset()
 
                 let request = ChatRequest(
                     model: model,
@@ -92,8 +96,12 @@ final class ChatSession {
                 )
                 let result = try await client.stream(request, apiKey: apiKey) { content, toolCalls in
                     streamingText = content
+                    pacer.receive(content)
                     streamingToolCalls = toolCalls
                 }
+                // Let the pacer finish revealing the text (at most about 0.5 s), so the
+                // switch to the saved message below shows the same text and nothing jumps.
+                await pacer.finish()
 
                 metrics.append(RequestMetric(
                     iteration: iteration,
@@ -112,6 +120,7 @@ final class ChatSession {
                 append(.assistant, content: result.content, toolCalls: result.toolCalls, in: context)
                 streamingText = ""
                 streamingToolCalls = []
+                pacer.reset()
 
                 if result.toolCalls.isEmpty {
                     turn.stopReason = "completed"
@@ -150,6 +159,7 @@ final class ChatSession {
 
         streamingText = ""
         streamingToolCalls = []
+        pacer.reset()
         turn.requests = metrics
         turn.parseFailures = parseFailures
         turn.latencyMs = (clock.now - turnStart).milliseconds

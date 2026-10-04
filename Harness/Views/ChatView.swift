@@ -29,7 +29,7 @@ struct ChatView: View {
                                runningToolCallIDs: session.runningToolCallIDs, isTurnRunning: session.isRunning)
                 }
                 if session.isRunning {
-                    StreamingRow(text: session.streamingText, toolCalls: session.streamingToolCalls)
+                    StreamingRow(text: session.pacer.displayedText, toolCalls: session.streamingToolCalls)
                 }
                 if let error = session.errorMessage {
                     Label(error, systemImage: "exclamationmark.triangle")
