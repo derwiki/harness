@@ -10,9 +10,13 @@ import SwiftData
 
 @main
 struct HarnessApp: App {
+    @State private var sessionStore = SessionStore()
+
     var sharedModelContainer: ModelContainer = {
         let schema = Schema([
-            Item.self,
+            Conversation.self,
+            Message.self,
+            TurnRecord.self,
         ])
         let modelConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
 
@@ -26,6 +30,7 @@ struct HarnessApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView()
+                .environment(sessionStore)
         }
         .modelContainer(sharedModelContainer)
     }
