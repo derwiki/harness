@@ -175,7 +175,7 @@ private struct StreamingRow: View {
                 ProgressView()
             }
             if !text.isEmpty {
-                MarkdownText(source: text, isStreaming: true)
+                MarkdownText(source: text)
             }
             ForEach(Array(toolCalls.enumerated()), id: \.offset) { _, call in
                 ToolCallRow(call: call, result: nil, status: .streaming)

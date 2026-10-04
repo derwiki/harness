@@ -11,7 +11,6 @@ import SwiftData
 @Observable
 final class ChatSession {
     static let maxIterations = 10
-    static let streamUpdateInterval: Duration = .milliseconds(60)
 
     let conversation: Conversation
     private(set) var isRunning = false {
@@ -26,8 +25,6 @@ final class ChatSession {
 
     @ObservationIgnored private var task: Task<Void, Never>?
     @ObservationIgnored private var parseFailures: [ToolParseFailure] = []
-    /// Every received token, unthrottled. Used to keep the partial answer when a turn stops.
-    @ObservationIgnored private var latestStreamText = ""
     @ObservationIgnored private let client = OpenRouterClient()
 
     init(conversation: Conversation) {
@@ -86,7 +83,6 @@ final class ChatSession {
                 try Task.checkCancellation()
                 streamingText = ""
                 streamingToolCalls = []
-                latestStreamText = ""
 
                 let request = ChatRequest(
                     model: model,
@@ -94,17 +90,10 @@ final class ChatSession {
                     tools: ToolRegistry.wireDefinitions,
                     reasoning: effort.wireValue.map { ChatRequest.Reasoning(effort: $0) }
                 )
-                // Publish to the UI at most every 60 ms: per-token updates make the text and scroll position jitter.
-                var lastPublish = clock.now - Self.streamUpdateInterval
                 let result = try await client.stream(request, apiKey: apiKey) { content, toolCalls in
-                    latestStreamText = content
-                    let now = clock.now
-                    guard now - lastPublish >= Self.streamUpdateInterval else { return }
-                    lastPublish = now
                     streamingText = content
                     streamingToolCalls = toolCalls
                 }
-                latestStreamText = ""
 
                 metrics.append(RequestMetric(
                     iteration: iteration,
@@ -153,9 +142,8 @@ final class ChatSession {
                 errorMessage = error.localizedDescription
             }
             // Keep any partial answer, then answer tool calls that never ran.
-            // Use the latest text, not the throttled UI copy, so no tokens are lost.
-            if !latestStreamText.isEmpty {
-                append(.assistant, content: latestStreamText, in: context)
+            if !streamingText.isEmpty {
+                append(.assistant, content: streamingText, in: context)
             }
             closeDanglingToolCalls(reason: "Not run: the turn was stopped before this tool finished.", in: context)
         }
