@@ -12,6 +12,7 @@ struct ContentView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(SessionStore.self) private var sessionStore
     @Query(sort: \Conversation.updatedAt, order: .reverse) private var conversations: [Conversation]
+    @Query private var turns: [TurnRecord]
     @State private var selection: Conversation?
     @State private var showingSettings = false
     @AppStorage(AppSettings.modelIDKey) private var defaultModelID = AppSettings.defaultModelID
@@ -21,16 +22,24 @@ struct ContentView: View {
             List(selection: $selection) {
                 ForEach(conversations) { conversation in
                     NavigationLink(value: conversation) {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(conversation.title)
-                                .lineLimit(1)
-                            HStack(spacing: 4) {
-                                Text(conversation.modelOption.name)
-                                Text(verbatim: "·")
-                                Text(conversation.updatedAt, format: .relative(presentation: .named))
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(conversation.title)
+                                    .lineLimit(1)
+                                HStack(spacing: 4) {
+                                    Text(conversation.modelOption.name)
+                                    Text(verbatim: "·")
+                                    Text(conversation.updatedAt, format: .relative(presentation: .named))
+                                }
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
                             }
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                            Spacer()
+                            // Covers the whole turn: waiting, streaming, and running tools.
+                            if sessionStore.isRunning(conversation) {
+                                ProgressView()
+                                    .accessibilityLabel("Responding")
+                            }
                         }
                     }
                 }
@@ -43,9 +52,22 @@ struct ContentView: View {
                 }
             }
             .navigationTitle("Harness")
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button("Settings", systemImage: "gear") { showingSettings = true }
+                }
+                // Gear · "Harness" · weekly cost · New Chat, left to right.
+                ToolbarItem(placement: .principal) {
+                    HStack(spacing: 8) {
+                        Text("Harness")
+                            .font(.headline)
+                        Text("\(Conversation.formatCost(lastWeekCost)) last week")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .monospacedDigit()
+                    }
+                    .accessibilityElement(children: .combine)
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     newChatMenu
@@ -81,6 +103,13 @@ struct ContentView: View {
         } label: {
             Label("New Chat", systemImage: "square.and.pencil")
         }
+    }
+
+    /// OpenRouter cost of all turns that started in the last 7 days.
+    /// Turns of deleted conversations are deleted with them, so they no longer count.
+    private var lastWeekCost: Double {
+        let cutoff = Date().addingTimeInterval(-7 * 24 * 60 * 60)
+        return turns.filter { $0.startedAt >= cutoff }.reduce(0) { $0 + $1.totalCost }
     }
 
     private func newConversation(modelID: String) {

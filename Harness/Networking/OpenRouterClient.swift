@@ -24,6 +24,7 @@ struct StreamResult {
     var content = ""
     var toolCalls: [ToolCallRecord] = []
     var usage: TokenUsage?
+    var provider: String?
     var finishReason: String?
     var timeToFirstByte: Duration?
     var timeToFirstToken: Duration?
@@ -90,6 +91,9 @@ struct OpenRouterClient {
             }
             if let usage = chunk.usage {
                 result.usage = usage
+            }
+            if let provider = chunk.provider, !provider.isEmpty {
+                result.provider = provider
             }
 
             var changed = false

@@ -11,9 +11,14 @@ import SwiftData
 @Observable
 final class ChatSession {
     static let maxIterations = 10
+    static let streamUpdateInterval: Duration = .milliseconds(60)
 
     let conversation: Conversation
-    private(set) var isRunning = false
+    private(set) var isRunning = false {
+        didSet { if isRunning != oldValue { onRunningChange?(isRunning) } }
+    }
+    /// Called when `isRunning` changes. `SessionStore` uses it to track running conversations.
+    @ObservationIgnored var onRunningChange: ((Bool) -> Void)?
     private(set) var streamingText = ""
     private(set) var streamingToolCalls: [ToolCallRecord] = []
     private(set) var runningToolCallIDs: Set<String> = []
@@ -21,6 +26,8 @@ final class ChatSession {
 
     @ObservationIgnored private var task: Task<Void, Never>?
     @ObservationIgnored private var parseFailures: [ToolParseFailure] = []
+    /// Every received token, unthrottled. Used to keep the partial answer when a turn stops.
+    @ObservationIgnored private var latestStreamText = ""
     @ObservationIgnored private let client = OpenRouterClient()
 
     init(conversation: Conversation) {
@@ -79,6 +86,7 @@ final class ChatSession {
                 try Task.checkCancellation()
                 streamingText = ""
                 streamingToolCalls = []
+                latestStreamText = ""
 
                 let request = ChatRequest(
                     model: model,
@@ -86,10 +94,17 @@ final class ChatSession {
                     tools: ToolRegistry.wireDefinitions,
                     reasoning: effort.wireValue.map { ChatRequest.Reasoning(effort: $0) }
                 )
+                // Publish to the UI at most every 60 ms: per-token updates make the text and scroll position jitter.
+                var lastPublish = clock.now - Self.streamUpdateInterval
                 let result = try await client.stream(request, apiKey: apiKey) { content, toolCalls in
+                    latestStreamText = content
+                    let now = clock.now
+                    guard now - lastPublish >= Self.streamUpdateInterval else { return }
+                    lastPublish = now
                     streamingText = content
                     streamingToolCalls = toolCalls
                 }
+                latestStreamText = ""
 
                 metrics.append(RequestMetric(
                     iteration: iteration,
@@ -99,7 +114,8 @@ final class ChatSession {
                     usage: result.usage,
                     finishReason: result.finishReason,
                     toolCallCount: result.toolCalls.count,
-                    malformedChunks: result.malformedChunks
+                    malformedChunks: result.malformedChunks,
+                    provider: result.provider
                 ))
                 // Store as we go so the running cost in the chat header updates after each request.
                 turn.requests = metrics
@@ -137,8 +153,9 @@ final class ChatSession {
                 errorMessage = error.localizedDescription
             }
             // Keep any partial answer, then answer tool calls that never ran.
-            if !streamingText.isEmpty {
-                append(.assistant, content: streamingText, in: context)
+            // Use the latest text, not the throttled UI copy, so no tokens are lost.
+            if !latestStreamText.isEmpty {
+                append(.assistant, content: latestStreamText, in: context)
             }
             closeDanglingToolCalls(reason: "Not run: the turn was stopped before this tool finished.", in: context)
         }
@@ -246,16 +263,33 @@ final class ChatSession {
 /// Keeps one `ChatSession` per conversation so a running turn survives navigation.
 @Observable
 final class SessionStore {
+    /// Not observed: sessions are created lazily while views render.
     @ObservationIgnored private var sessions: [UUID: ChatSession] = [:]
+    /// Conversations with a turn in progress. Observed, so the conversation list can show a spinner
+    /// even for chats whose views are not on screen.
+    private(set) var runningConversationIDs: Set<UUID> = []
 
     func session(for conversation: Conversation) -> ChatSession {
         if let existing = sessions[conversation.uuid] { return existing }
         let session = ChatSession(conversation: conversation)
-        sessions[conversation.uuid] = session
+        let id = conversation.uuid
+        session.onRunningChange = { [weak self] running in
+            if running {
+                self?.runningConversationIDs.insert(id)
+            } else {
+                self?.runningConversationIDs.remove(id)
+            }
+        }
+        sessions[id] = session
         return session
+    }
+
+    func isRunning(_ conversation: Conversation) -> Bool {
+        runningConversationIDs.contains(conversation.uuid)
     }
 
     func discard(_ conversation: Conversation) {
         sessions.removeValue(forKey: conversation.uuid)?.stop()
+        runningConversationIDs.remove(conversation.uuid)
     }
 }

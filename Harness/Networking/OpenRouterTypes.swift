@@ -13,6 +13,8 @@ nonisolated struct ChatRequest: Encodable {
     var tools: [WireTool]
     var stream: Bool = true
     var streamOptions = StreamOptions()
+    /// Always sent so providers that size reasoning from the output limit see the same value on every request.
+    var maxTokens = 32_000
     /// Restrict routing to zero-data-retention endpoints.
     var provider = ProviderPreferences()
     /// Omitted when nil so the provider uses its default reasoning behavior.
@@ -21,6 +23,7 @@ nonisolated struct ChatRequest: Encodable {
     enum CodingKeys: String, CodingKey {
         case model, messages, tools, stream, provider, reasoning
         case streamOptions = "stream_options"
+        case maxTokens = "max_tokens"
     }
 
     struct Reasoning: Encodable {
@@ -87,6 +90,8 @@ nonisolated struct ChatChunk: Decodable {
     var choices: [Choice]?
     var usage: TokenUsage?
     var error: ErrorBody?
+    /// The provider that served the request, for example "DeepInfra".
+    var provider: String?
 
     struct Choice: Decodable {
         var delta: Delta?

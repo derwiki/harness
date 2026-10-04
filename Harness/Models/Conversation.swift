@@ -36,9 +36,12 @@ final class Conversation {
         turns.reduce(0) { $0 + $1.totalCost }
     }
 
-    /// Cost as "$1.12". Costs above zero but under a cent show as "<$0.01".
     var formattedCost: String {
-        let cost = totalCost
+        Self.formatCost(totalCost)
+    }
+
+    /// Cost as "$1.12". Costs above zero but under a cent show as "<$0.01".
+    static func formatCost(_ cost: Double) -> String {
         if cost > 0 && cost < 0.01 { return "<$0.01" }
         return cost.formatted(.currency(code: "USD").precision(.fractionLength(2)))
     }

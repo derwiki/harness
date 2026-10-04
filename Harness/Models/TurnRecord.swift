@@ -16,6 +16,8 @@ nonisolated struct RequestMetric: Codable, Hashable {
     var finishReason: String?
     var toolCallCount: Int
     var malformedChunks: Int
+    /// The provider that served the request. Optional so records saved before this field still decode.
+    var provider: String?
 }
 
 /// A tool call whose arguments could not be parsed.

@@ -57,6 +57,7 @@ private struct TurnSection: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Request \(request.iteration)").font(.subheadline.weight(.semibold))
                     Group {
+                        Text("Provider: \(request.provider ?? "–")")
                         Text("Latency \(Self.ms(request.latencyMs)) · first byte \(Self.ms(request.timeToFirstByteMs)) · first token \(Self.ms(request.timeToFirstTokenMs))")
                         Text("Tokens: prompt \(Self.count(request.usage?.promptTokens)) · completion \(Self.count(request.usage?.completionTokens)) · reasoning \(Self.count(request.usage?.reasoningTokens)) · total \(Self.count(request.usage?.totalTokens))")
                         if let cost = request.usage?.cost {
