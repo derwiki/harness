@@ -8,6 +8,7 @@ import SwiftUI
 struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @AppStorage(AppSettings.modelIDKey) private var modelID = AppSettings.defaultModelID
+    @AppStorage(AppSettings.dictationModelIDKey) private var dictationModelID = ""
     /// Only holds a newly typed key. The stored key is never loaded into the UI.
     @State private var newAPIKey = ""
     @State private var hasStoredKey = false
@@ -38,6 +39,17 @@ struct SettingsView: View {
                     Text("Custom Model ID")
                 } footer: {
                     Text("Any OpenRouter model slug that supports tool calling. If it is not a preset, it shows as an extra option in the New Chat menu. Requests only route to zero-data-retention endpoints.")
+                }
+
+                Section {
+                    TextField(AppSettings.defaultDictationModelID, text: $dictationModelID)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .font(.body.monospaced())
+                } header: {
+                    Text("Dictation Model")
+                } footer: {
+                    Text("An OpenRouter model that accepts audio. It transcribes your voice and removes filler words. Leave empty for the default.")
                 }
 
                 if let errorMessage {

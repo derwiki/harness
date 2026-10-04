@@ -13,6 +13,7 @@ struct ChatView: View {
     @Environment(SessionStore.self) private var sessionStore
     @State private var draft = ""
     @State private var showingTelemetry = false
+    @State private var dictation = DictationController()
 
     var body: some View {
         let session = sessionStore.session(for: conversation)
@@ -95,29 +96,93 @@ struct ChatView: View {
     }
 
     private func inputBar(session: ChatSession) -> some View {
-        HStack(alignment: .bottom, spacing: 8) {
-            TextField("Message", text: $draft, axis: .vertical)
-                .lineLimit(1...6)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 9)
-                .background(.fill.tertiary, in: RoundedRectangle(cornerRadius: 20))
-                .onSubmit { send(session) }
-
-            if session.isRunning {
-                Button("Stop", systemImage: "stop.circle.fill") { session.stop() }
-                    .labelStyle(.iconOnly)
-                    .font(.largeTitle)
+        VStack(alignment: .leading, spacing: 6) {
+            if let error = dictation.errorMessage {
+                Label(error, systemImage: "mic.slash")
+                    .font(.caption)
                     .foregroundStyle(.red)
-            } else {
-                Button("Send", systemImage: "arrow.up.circle.fill") { send(session) }
-                    .labelStyle(.iconOnly)
-                    .font(.largeTitle)
-                    .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+            HStack(alignment: .bottom, spacing: 8) {
+                if case .recording(let startedAt) = dictation.state {
+                    recordingPill(startedAt: startedAt)
+                } else {
+                    TextField("Message", text: $draft, axis: .vertical)
+                        .lineLimit(1...6)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 9)
+                        .background(.fill.tertiary, in: RoundedRectangle(cornerRadius: 20))
+                        .onSubmit { send(session) }
+                }
+                dictationButton
+                sendOrStopButton(session: session)
             }
         }
         .padding(.horizontal)
         .padding(.vertical, 8)
         .background(.bar)
+        .onDisappear { dictation.cancel() }
+    }
+
+    private func recordingPill(startedAt: Date) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "circle.fill")
+                .font(.caption2)
+                .foregroundStyle(.red)
+                .symbolEffect(.pulse)
+            Text(timerInterval: startedAt...Date.distantFuture, countsDown: false)
+                .monospacedDigit()
+            Text("Listening…")
+                .foregroundStyle(.secondary)
+            Spacer()
+            Button("Cancel", systemImage: "xmark.circle.fill") { dictation.cancel() }
+                .labelStyle(.iconOnly)
+                .foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 9)
+        .background(.red.opacity(0.12), in: RoundedRectangle(cornerRadius: 20))
+    }
+
+    @ViewBuilder
+    private var dictationButton: some View {
+        switch dictation.state {
+        case .idle:
+            Button("Dictate", systemImage: "mic.circle.fill") {
+                Task { await dictation.start() }
+            }
+            .labelStyle(.iconOnly)
+            .font(.largeTitle)
+            .foregroundStyle(.secondary)
+        case .recording:
+            Button("Finish Dictation", systemImage: "checkmark.circle.fill") {
+                Task {
+                    guard let text = await dictation.stopAndTranscribe() else { return }
+                    draft = draft.isEmpty ? text : draft + " " + text
+                }
+            }
+            .labelStyle(.iconOnly)
+            .font(.largeTitle)
+            .foregroundStyle(.red)
+        case .transcribing:
+            ProgressView()
+                .frame(width: 37, height: 37)
+                .accessibilityLabel("Transcribing")
+        }
+    }
+
+    @ViewBuilder
+    private func sendOrStopButton(session: ChatSession) -> some View {
+        if session.isRunning {
+            Button("Stop", systemImage: "stop.circle.fill") { session.stop() }
+                .labelStyle(.iconOnly)
+                .font(.largeTitle)
+                .foregroundStyle(.red)
+        } else {
+            Button("Send", systemImage: "arrow.up.circle.fill") { send(session) }
+                .labelStyle(.iconOnly)
+                .font(.largeTitle)
+                .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || dictation.state != .idle)
+        }
     }
 
     private func send(_ session: ChatSession) {

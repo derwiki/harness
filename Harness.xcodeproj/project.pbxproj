@@ -247,6 +247,7 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_NSCalendarsFullAccessUsageDescription = "Harness reads your calendar events so the assistant can answer questions about your schedule. It never changes your calendar.";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Harness records your voice when you tap the microphone, then turns it into text for your message.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -281,6 +282,7 @@
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_NSCalendarsFullAccessUsageDescription = "Harness reads your calendar events so the assistant can answer questions about your schedule. It never changes your calendar.";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Harness records your voice when you tap the microphone, then turns it into text for your message.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;

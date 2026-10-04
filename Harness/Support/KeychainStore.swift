@@ -66,4 +66,13 @@ enum AppSettings {
         let stored = UserDefaults.standard.string(forKey: modelIDKey) ?? defaultModelID
         return stored.trimmingCharacters(in: .whitespacesAndNewlines)
     }
+
+    static let dictationModelIDKey = "dictationModelID"
+    /// Best result in testing: the only ZDR audio model that applied spoken self-corrections correctly every time.
+    static let defaultDictationModelID = "google/gemini-3.8-flash"
+
+    static var dictationModelID: String {
+        let stored = (UserDefaults.standard.string(forKey: dictationModelIDKey) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        return stored.isEmpty ? defaultDictationModelID : stored
+    }
 }
