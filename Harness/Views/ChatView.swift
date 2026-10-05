@@ -113,7 +113,7 @@ struct ChatView: View {
                         .background(.fill.tertiary, in: RoundedRectangle(cornerRadius: 20))
                         .onSubmit { send(session) }
                 }
-                dictationButton
+                dictationButton(session: session)
                 sendOrStopButton(session: session)
             }
         }
@@ -131,8 +131,7 @@ struct ChatView: View {
                 .symbolEffect(.pulse)
             Text(timerInterval: startedAt...Date.distantFuture, countsDown: false)
                 .monospacedDigit()
-            Text("Listening…")
-                .foregroundStyle(.secondary)
+            LevelMeter(levels: dictation.levels)
             Spacer()
             Button("Cancel", systemImage: "xmark.circle.fill") { dictation.cancel() }
                 .labelStyle(.iconOnly)
@@ -144,7 +143,7 @@ struct ChatView: View {
     }
 
     @ViewBuilder
-    private var dictationButton: some View {
+    private func dictationButton(session: ChatSession) -> some View {
         switch dictation.state {
         case .idle:
             Button("Dictate", systemImage: "mic.circle.fill") {
@@ -157,7 +156,10 @@ struct ChatView: View {
             Button("Finish Dictation", systemImage: "checkmark.circle.fill") {
                 Task {
                     guard let text = await dictation.stopAndTranscribe() else { return }
+                    // Send right away, together with anything already typed. If a turn is still
+                    // running and the message cannot be sent, the text stays in the draft.
                     draft = draft.isEmpty ? text : draft + " " + text
+                    send(session)
                 }
             }
             .labelStyle(.iconOnly)
@@ -229,6 +231,24 @@ private struct MessageRow: View {
     }
 }
 
+/// Live microphone level: one bar per recent sample, newest on the right.
+private struct LevelMeter: View {
+    let levels: [Float]
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 2) {
+            ForEach(levels.indices, id: \.self) { index in
+                Capsule()
+                    .fill(.red)
+                    .frame(width: 3, height: 3 + CGFloat(levels[index]) * 19)
+            }
+        }
+        .frame(height: 22)
+        .animation(.linear(duration: 0.05), value: levels)
+        .accessibilityLabel("Microphone level")
+    }
+}
+
 /// The assistant reply that is still streaming.
 private struct StreamingRow: View {
     let text: String
@@ -247,4 +267,23 @@ private struct StreamingRow: View {
             }
         }
     }
+}
+
+#Preview("Level meter") {
+    // A rising and falling voice, quiet at the edges.
+    let levels: [Float] = (0..<DictationController.levelHistoryCount).map { index in
+        let x = Float(index) / Float(DictationController.levelHistoryCount - 1)
+        return max(0, sin(x * .pi) * (0.55 + 0.45 * sin(x * 19)))
+    }
+    HStack(spacing: 8) {
+        Image(systemName: "circle.fill").font(.caption2).foregroundStyle(.red)
+        Text(verbatim: "0:07").monospacedDigit()
+        LevelMeter(levels: levels)
+        Spacer()
+        Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
+    }
+    .padding(.horizontal, 14)
+    .padding(.vertical, 9)
+    .background(.red.opacity(0.12), in: RoundedRectangle(cornerRadius: 20))
+    .padding()
 }

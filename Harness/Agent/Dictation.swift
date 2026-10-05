@@ -23,10 +23,16 @@ final class DictationController {
     /// About 9.6 MB of 16 kHz mono WAV; keeps the upload a reasonable size.
     static let maximumDuration: TimeInterval = 300
 
+    /// Number of recent level samples kept for the meter (about 1.5 s at 20 samples per second).
+    static let levelHistoryCount = 30
+
     private(set) var state: State = .idle
     var errorMessage: String?
+    /// Recent microphone levels, 0 (silent) to 1 (loud), oldest first. Updated about 20 times per second.
+    private(set) var levels: [Float] = Array(repeating: 0, count: levelHistoryCount)
 
     @ObservationIgnored private var recorder: AVAudioRecorder?
+    @ObservationIgnored private var meterTask: Task<Void, Never>?
     @ObservationIgnored private var transcription: Task<String?, Never>?
 
     var isRecording: Bool {
@@ -59,11 +65,13 @@ final class DictationController {
                 AVLinearPCMIsBigEndianKey: false,
             ]
             let recorder = try AVAudioRecorder(url: url, settings: settings)
+            recorder.isMeteringEnabled = true
             guard recorder.record(forDuration: Self.maximumDuration) else {
                 throw DictationError(message: "Could not start recording.")
             }
             self.recorder = recorder
             state = .recording(startedAt: Date())
+            startMetering(recorder)
         } catch {
             errorMessage = error.localizedDescription
             deactivateSession()
@@ -73,6 +81,7 @@ final class DictationController {
     /// Stops recording and returns the cleaned-up text, or nil if there was nothing to transcribe.
     func stopAndTranscribe() async -> String? {
         guard case .recording(let startedAt) = state, let recorder else { return nil }
+        stopMetering()
         recorder.stop()
         self.recorder = nil
         deactivateSession()
@@ -114,6 +123,7 @@ final class DictationController {
 
     /// Discards the recording, or abandons a transcription in progress.
     func cancel() {
+        stopMetering()
         if let recorder {
             recorder.stop()
             recorder.deleteRecording()
@@ -122,6 +132,34 @@ final class DictationController {
         }
         transcription?.cancel()
         state = .idle
+    }
+
+    // MARK: - Level meter
+
+    private func startMetering(_ recorder: AVAudioRecorder) {
+        levels = Array(repeating: 0, count: Self.levelHistoryCount)
+        meterTask = Task { [weak self] in
+            while !Task.isCancelled {
+                recorder.updateMeters()
+                self?.pushLevel(Self.normalizedLevel(decibels: recorder.averagePower(forChannel: 0)))
+                try? await Task.sleep(for: .milliseconds(50))
+            }
+        }
+    }
+
+    private func stopMetering() {
+        meterTask?.cancel()
+        meterTask = nil
+    }
+
+    private func pushLevel(_ level: Float) {
+        levels.removeFirst()
+        levels.append(level)
+    }
+
+    /// Maps average power to 0...1: -50 dBFS (quiet room) is 0, -10 dBFS (loud speech) is 1.
+    static func normalizedLevel(decibels: Float) -> Float {
+        min(max((decibels + 50) / 40, 0), 1)
     }
 
     private func deactivateSession() {
