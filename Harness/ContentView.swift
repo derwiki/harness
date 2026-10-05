@@ -42,8 +42,13 @@ struct ContentView: View {
                             }
                         }
                     }
+                    // Swipe left a little to reveal Delete; a full swipe deletes at once.
+                    .swipeActions(edge: .trailing) {
+                        Button("Delete", systemImage: "trash", role: .destructive) {
+                            delete(conversation)
+                        }
+                    }
                 }
-                .onDelete(perform: deleteConversations)
             }
             .overlay {
                 if conversations.isEmpty {
@@ -118,12 +123,14 @@ struct ContentView: View {
         selection = conversation
     }
 
-    private func deleteConversations(offsets: IndexSet) {
-        for index in offsets {
-            let conversation = conversations[index]
-            if selection == conversation { selection = nil }
-            sessionStore.discard(conversation)
+    /// Deletes a conversation. A turn in progress is cancelled first: its network request, any
+    /// running tool, and the streaming display all stop, and it writes nothing more.
+    private func delete(_ conversation: Conversation) {
+        if selection == conversation { selection = nil }
+        sessionStore.discard(conversation)
+        withAnimation {
             modelContext.delete(conversation)
+            try? modelContext.save()
         }
     }
 }

@@ -27,6 +27,8 @@ final class ChatSession {
     var errorMessage: String?
 
     @ObservationIgnored private var task: Task<Void, Never>?
+    /// Set when the conversation is deleted; the cancelled turn must not write anything after this.
+    @ObservationIgnored private var isDiscarded = false
     @ObservationIgnored private var parseFailures: [ToolParseFailure] = []
     @ObservationIgnored private let client = OpenRouterClient()
 
@@ -70,6 +72,17 @@ final class ChatSession {
         task?.cancel()
     }
 
+    /// Called when the conversation is deleted. Cancelling the task also cancels the network stream
+    /// and any running tool request; the turn then returns without writing to the deleted
+    /// conversation. The pacer's display link stops and the streaming state is cleared right away.
+    func discard() {
+        isDiscarded = true
+        task?.cancel()
+        pacer.reset()
+        streamingText = ""
+        streamingToolCalls = []
+    }
+
     // MARK: - Agent loop
 
     private func runTurn(apiKey: String, model: String, effort: ReasoningEffort, context: ModelContext) async {
@@ -80,6 +93,12 @@ final class ChatSession {
         var metrics: [RequestMetric] = []
         let clock = ContinuousClock()
         let turnStart = clock.now
+        // Clear the streaming UI however the turn ends, including after a delete.
+        defer {
+            streamingText = ""
+            streamingToolCalls = []
+            pacer.reset()
+        }
 
         do {
             for iteration in 1...Self.maxIterations {
@@ -102,6 +121,9 @@ final class ChatSession {
                 // Let the pacer finish revealing the text (at most about 0.5 s), so the
                 // switch to the saved message below shows the same text and nothing jumps.
                 await pacer.finish()
+                // A delete during any await must not write to the deleted conversation after it.
+                // (Stop still saves what arrived, as before.)
+                if isDiscarded { throw CancellationError() }
 
                 metrics.append(RequestMetric(
                     iteration: iteration,
@@ -137,12 +159,13 @@ final class ChatSession {
                 for call in result.toolCalls {
                     try Task.checkCancellation()
                     let output = await execute(call)
+                    if isDiscarded { throw CancellationError() }
                     append(.tool, content: output, toolCallID: call.id, toolName: call.name, in: context)
                 }
             }
         } catch {
             // The conversation was deleted while this turn ran; there is nothing left to update.
-            guard !conversation.isDeleted, conversation.modelContext != nil else { return }
+            guard !isDiscarded, !conversation.isDeleted, conversation.modelContext != nil else { return }
             if Self.isCancellation(error) {
                 turn.stopReason = "cancelled"
             } else {
@@ -157,9 +180,6 @@ final class ChatSession {
             closeDanglingToolCalls(reason: "Not run: the turn was stopped before this tool finished.", in: context)
         }
 
-        streamingText = ""
-        streamingToolCalls = []
-        pacer.reset()
         turn.requests = metrics
         turn.parseFailures = parseFailures
         turn.latencyMs = (clock.now - turnStart).milliseconds
@@ -287,7 +307,7 @@ final class SessionStore {
     }
 
     func discard(_ conversation: Conversation) {
-        sessions.removeValue(forKey: conversation.uuid)?.stop()
+        sessions.removeValue(forKey: conversation.uuid)?.discard()
         runningConversationIDs.remove(conversation.uuid)
     }
 }
