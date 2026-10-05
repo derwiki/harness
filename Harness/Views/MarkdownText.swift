@@ -14,6 +14,9 @@ struct MarkdownText: View {
             // Blocks have no stable identity and are re-parsed while streaming, so position is the identity.
             ForEach(Array(MarkdownBlock.parse(source).enumerated()), id: \.offset) { _, block in
                 blockView(block)
+                    // Only runs when blocks are inserted inside an animation (StreamPacer.blockReveal):
+                    // fade in while sliding up 6 pt.
+                    .transition(.opacity.combined(with: .offset(y: 6)))
             }
         }
         .textSelection(.enabled)

@@ -14,6 +14,14 @@ struct ChatView: View {
     @State private var draft = ""
     @State private var showingTelemetry = false
     @State private var dictation = DictationController()
+    @State private var showsJumpToBottom = false
+    @State private var position = ScrollPosition(idType: String.self)
+
+    private static let latestTurnID = "latest-turn"
+    private static let bottomID = "bottom"
+    private static let stackSpacing: CGFloat = 14
+    private static let contentPadding: CGFloat = 16
+    private static let pinnedTopGap: CGFloat = 10
 
     var body: some View {
         let session = sessionStore.session(for: conversation)
@@ -23,26 +31,66 @@ struct ChatView: View {
             uniquingKeysWith: { first, _ in first }
         )
 
+        // The latest turn starts at the last user message. Earlier messages are history.
+        let visible = messages.filter { $0.role != .tool }
+        let latestStart = visible.lastIndex { $0.role == .user } ?? visible.endIndex
+        let history = visible[..<latestStart]
+        let latest = visible[latestStart...]
+
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: 14) {
-                ForEach(messages.filter { $0.role != .tool }) { message in
+            LazyVStack(alignment: .leading, spacing: Self.stackSpacing) {
+                ForEach(history) { message in
                     MessageRow(message: message, toolResults: toolResults,
                                runningToolCallIDs: session.runningToolCallIDs, isTurnRunning: session.isRunning)
                 }
-                if session.isRunning {
-                    StreamingRow(text: session.pacer.displayedText, toolCalls: session.streamingToolCalls)
-                }
-                if let error = session.errorMessage {
-                    Label(error, systemImage: "exclamationmark.triangle")
-                        .font(.callout)
-                        .foregroundStyle(.red)
-                }
+                latestTurn(Array(latest), toolResults: toolResults, session: session)
+                    .id(Self.latestTurnID)
+                Color.clear
+                    .frame(height: 1)
+                    .id(Self.bottomID)
             }
-            .padding()
+            .scrollTargetLayout()
+            .padding(Self.contentPadding)
         }
-        .defaultScrollAnchor(.bottom)
-        .defaultScrollAnchor(.bottom, for: .sizeChanges)
+        .scrollPosition($position)
+        // Open at the end. Because the latest turn fills the visible height, that shows its user
+        // message at the top. No anchor for size changes: the viewport must not follow the stream.
+        .defaultScrollAnchor(.bottom, for: .initialOffset)
         .scrollDismissesKeyboard(.interactively)
+        .onScrollGeometryChange(for: Bool.self) { geometry in
+            // containerSize is the visible size (insets excluded), but contentOffset is measured from
+            // the top of the full frame (it is -insets.top at the top). So the bottom offset is
+            // content - container - insets.top. Measured on device: 2953 - 660 - 116 = 2177.
+            let bottomOffset = geometry.contentSize.height - geometry.containerSize.height - geometry.contentInsets.top
+            return geometry.contentOffset.y < bottomOffset - 40
+        } action: { _, isAboveBottom in
+            withAnimation(.easeOut(duration: 0.2)) { showsJumpToBottom = isAboveBottom }
+        }
+        .overlay(alignment: .bottom) {
+            if showsJumpToBottom {
+                Button {
+                    withAnimation { position.scrollTo(edge: .bottom) }
+                } label: {
+                    // The whole 44 pt circle is the tap target, not only the arrow.
+                    Image(systemName: "arrow.down")
+                        .font(.headline)
+                        .frame(width: 44, height: 44)
+                        .background(.regularMaterial, in: Circle())
+                        .contentShape(Circle())
+                }
+                .accessibilityLabel("Jump to Bottom")
+                .shadow(radius: 4, y: 2)
+                .padding(.bottom, 12)
+                .transition(.opacity.combined(with: .scale(scale: 0.8)))
+            }
+        }
+        // On send, pin the new user message to the top; the reply then grows down into the empty space.
+        .onChange(of: latest.first?.order) { _, newValue in
+            guard newValue != nil else { return }
+            withAnimation(.easeOut(duration: 0.3)) {
+                position.scrollTo(id: Self.latestTurnID, anchor: .top)
+            }
+        }
         .safeAreaInset(edge: .bottom) {
             inputBar(session: session)
         }
@@ -61,6 +109,51 @@ struct ChatView: View {
         .sheet(isPresented: $showingTelemetry) {
             TelemetryView(conversation: conversation)
         }
+    }
+
+    /// The last user message and everything after it, including the streaming reply.
+    /// Its minimum height is the scroll view's visible height, so the user message can be pinned to
+    /// the top of the screen and the reply has empty space to grow into.
+    private func latestTurn(_ messages: [Message], toolResults: [String: String], session: ChatSession) -> some View {
+        ZStack(alignment: .topLeading) {
+            // Sets the minimum height. containerRelativeFrame gives the visible height (safe-area
+            // insets excluded). Everything below the turn's top must fill it: the turn, plus the stack
+            // spacing, the 1 pt bottom marker, and the bottom padding that follow it.
+            Color.clear
+                .containerRelativeFrame(.vertical) { length, _ in
+                    max(0, length - Self.stackSpacing - 1 - Self.contentPadding)
+                }
+            turnContent(messages, toolResults: toolResults, session: session)
+                // A small gap so the pinned user message does not touch the navigation bar.
+                .padding(.top, Self.pinnedTopGap)
+        }
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+    }
+
+    private func turnContent(_ messages: [Message], toolResults: [String: String], session: ChatSession) -> some View {
+        VStack(alignment: .leading, spacing: Self.stackSpacing) {
+            ForEach(messages) { message in
+                MessageRow(message: message, toolResults: toolResults,
+                           runningToolCallIDs: session.runningToolCallIDs, isTurnRunning: session.isRunning)
+            }
+            if session.isRunning {
+                StreamingRow(text: session.pacer.displayedText, toolCalls: session.streamingToolCalls)
+                    // Tell the pacer when the end of the reply is below the visible area,
+                    // so it skips pacing where nobody is watching.
+                    .onGeometryChange(for: Bool.self) { geometry in
+                        guard let viewport = geometry.bounds(of: .scrollView) else { return false }
+                        return geometry.size.height > viewport.maxY
+                    } action: { isOffscreen in
+                        session.pacer.isRevealPointOffscreen = isOffscreen
+                    }
+            }
+            if let error = session.errorMessage {
+                Label(error, systemImage: "exclamationmark.triangle")
+                    .font(.callout)
+                    .foregroundStyle(.red)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     /// Model and reasoning effort for this conversation. Changes apply from the next message.
@@ -286,4 +379,27 @@ private struct StreamingRow: View {
     .padding(.vertical, 9)
     .background(.red.opacity(0.12), in: RoundedRectangle(cornerRadius: 20))
     .padding()
+}
+
+#Preview("Pinned latest turn") {
+    let container = try! ModelContainer(for: Conversation.self, Message.self, TurnRecord.self,
+                                        configurations: ModelConfiguration(isStoredInMemoryOnly: true))
+    let conversation = Conversation(modelID: "deepseek/deepseek-v4.1-flash")
+    container.mainContext.insert(conversation)
+    let script: [(MessageRole, String)] = [
+        (.user, "What's TCP slow start?"),
+        (.assistant, "**Slow start** grows the congestion window exponentially until it reaches a threshold or sees loss.\n\n- Starts at about 10 segments\n- Doubles every round trip"),
+        (.user, "And congestion avoidance?"),
+        (.assistant, "After slow start, the window grows **linearly**: about one segment per round trip."),
+    ]
+    for (role, text) in script {
+        let message = Message(order: conversation.nextMessageOrder, role: role, content: text)
+        conversation.nextMessageOrder += 1
+        container.mainContext.insert(message)
+        message.conversation = conversation
+    }
+    conversation.title = "TCP"
+    return NavigationStack { ChatView(conversation: conversation) }
+        .modelContainer(container)
+        .environment(SessionStore())
 }
